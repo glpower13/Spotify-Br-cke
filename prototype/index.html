@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sprach-Playlist für Spotify</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --card: #171b24;
+    --accent: #1db954;      /* Spotify-Grün */
+    --accent-dark: #169c46;
+    --text: #f2f4f7;
+    --muted: #9aa4b2;
+    --border: #262c38;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -10%, #1a2230, var(--bg));
+    color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 560px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.4);
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; margin: 0 0 22px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  input[type=text], textarea {
+    width: 100%; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--border); background: #0f131b; color: var(--text);
+    font-size: 15px; outline: none;
+  }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 60px; }
+  button {
+    border: none; border-radius: 999px; cursor: pointer;
+    font-size: 15px; font-weight: 600; padding: 13px 20px;
+    transition: transform .05s ease, background .15s ease;
+  }
+  button:active { transform: scale(.98); }
+  .btn-primary { background: var(--accent); color: #04120a; width: 100%; }
+  .btn-primary:hover { background: var(--accent-dark); }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .mic {
+    width: 68px; height: 68px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--accent); color: #04120a; font-size: 28px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mic.listening { animation: pulse 1.2s infinite; background: var(--danger); color:#fff; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(255,107,107,.6)} 100%{box-shadow:0 0 0 18px rgba(255,107,107,0)} }
+  .status { font-size: 14px; color: var(--muted); margin-top: 16px; min-height: 20px; }
+  .status.err { color: var(--danger); }
+  .status.ok  { color: var(--accent); }
+  .hidden { display: none !important; }
+  a { color: var(--accent); }
+  ol { padding-left: 18px; line-height: 1.7; font-size: 14px; color: var(--muted); }
+  code { background:#0f131b; padding:2px 6px; border-radius:6px; color:#cfe; font-size:13px; }
+  .result { margin-top: 18px; padding: 14px; border:1px solid var(--border); border-radius:12px; background:#0f131b; }
+  .track { font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--border); color: var(--text); }
+  .track:last-child { border-bottom: none; }
+  .divider { height:1px; background:var(--border); margin:22px 0; }
+  .pill { display:inline-block; font-size:12px; color:var(--muted); border:1px solid var(--border); border-radius:999px; padding:3px 10px; margin-top:8px;}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🎧 Sprach-Playlist</h1>
+  <p class="sub">Sag, worauf du Lust hast — die Playlist landet in deinem Spotify.</p>
+
+  <!-- SCHRITT 1: einmalige Einrichtung der Client-ID -->
+  <div id="setup">
+    <label for="clientId">Deine Spotify Client-ID (nur einmal nötig)</label>
+    <input id="clientId" type="text" placeholder="z. B. 3f9a...  (aus dem Spotify Developer Dashboard)" />
+    <div class="pill">Wo bekomme ich die? → siehe README / Anleitung. Kostenlos, ~3 Min.</div>
+    <div style="height:14px"></div>
+    <button class="btn-primary" id="saveClient">Speichern & mit Spotify anmelden</button>
+  </div>
+
+  <!-- SCHRITT 2: eingeloggt -> Sprach-UI -->
+  <div id="app" class="hidden">
+    <div class="row">
+      <button class="mic" id="mic" title="Sprechen">🎤</button>
+      <div style="flex:1">
+        <label for="prompt" style="margin-top:0">Was möchtest du hören?</label>
+        <textarea id="prompt" placeholder='z. B. "entspannte Klaviermusik zum Lernen" oder "90er Party Hits"'></textarea>
+      </div>
+    </div>
+    <div style="height:14px"></div>
+    <button class="btn-primary" id="create">Playlist erstellen ▶</button>
+    <div class="status" id="status"></div>
+    <div class="result hidden" id="result"></div>
+
+    <div class="divider"></div>
+    <div class="row" style="justify-content:space-between">
+      <span class="sub" id="who" style="margin:0"></span>
+      <button class="btn-ghost" id="logout">Abmelden</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+//  Sprach-Playlist für Spotify  –  Prototyp
+//  Reiner Browser-Code. Kein Server, kein Passwort, kein Backend.
+//  Anmeldung per OAuth 2.0 "Authorization Code + PKCE" (sicher, ohne Secret).
+// =====================================================================
+
+// Redirect-URI = genau diese Seite. Muss im Spotify-Dashboard exakt so eingetragen sein.
+const REDIRECT_URI = window.location.origin + "/";
+const SCOPES = "playlist-modify-private playlist-modify-public";
+const AUTH_URL = "https://accounts.spotify.com/authorize";
+const TOKEN_URL = "https://accounts.spotify.com/api/token";
+const API = "https://api.spotify.com/v1";
+
+const $ = (id) => document.getElementById(id);
+const setStatus = (msg, kind = "") => { const s = $("status"); s.textContent = msg; s.className = "status " + kind; };
+
+// ---------- PKCE-Hilfsfunktionen ----------
+function randomString(len) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+  const arr = crypto.getRandomValues(new Uint8Array(len));
+  return Array.from(arr, (b) => chars[b % chars.length]).join("");
+}
+async function sha256base64url(str) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ---------- Token-Verwaltung ----------
+function getToken() { return sessionStorage.getItem("access_token"); }
+function saveToken(t) { sessionStorage.setItem("access_token", t); }
+function clearToken() { sessionStorage.removeItem("access_token"); }
+
+// ---------- Login starten ----------
+async function login() {
+  const clientId = localStorage.getItem("client_id");
+  if (!clientId) { alert("Bitte zuerst die Client-ID eintragen."); return; }
+  const verifier = randomString(64);
+  const challenge = await sha256base64url(verifier);
+  const state = randomString(16);
+  sessionStorage.setItem("pkce_verifier", verifier);
+  sessionStorage.setItem("oauth_state", state);
+  const params = new URLSearchParams({
+    client_id: clientId, response_type: "code", redirect_uri: REDIRECT_URI,
+    code_challenge_method: "S256", code_challenge: challenge, state, scope: SCOPES,
+  });
+  window.location = AUTH_URL + "?" + params.toString();
+}
+
+// ---------- Rückkehr von Spotify: Code gegen Token tauschen ----------
+async function handleRedirect() {
+  const p = new URLSearchParams(window.location.search);
+  const code = p.get("code");
+  if (!code) return false;
+  if (p.get("state") !== sessionStorage.getItem("oauth_state")) {
+    setStatus("Sicherheitsprüfung fehlgeschlagen (state). Bitte neu anmelden.", "err"); return false;
+  }
+  const clientId = localStorage.getItem("client_id");
+  const verifier = sessionStorage.getItem("pkce_verifier");
+  const body = new URLSearchParams({
+    grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI,
+    client_id: clientId, code_verifier: verifier,
+  });
+  const res = await fetch(TOKEN_URL, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
+  });
+  const data = await res.json();
+  // URL aufräumen (Code aus der Adresszeile entfernen)
+  window.history.replaceState({}, document.title, REDIRECT_URI);
+  if (data.access_token) { saveToken(data.access_token); return true; }
+  setStatus("Anmeldung fehlgeschlagen: " + (data.error_description || data.error || "unbekannt"), "err");
+  return false;
+}
+
+// ---------- Spotify-API-Aufruf ----------
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { Authorization: "Bearer " + getToken(), "Content-Type": "application/json", ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { clearToken(); throw new Error("Sitzung abgelaufen – bitte neu anmelden."); }
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || ("Fehler " + res.status)); }
+  return res.status === 204 ? null : res.json();
+}
+
+// ---------- Playlist bauen ----------
+async function createPlaylist(prompt) {
+  prompt = prompt.trim();
+  if (!prompt) { setStatus("Sag oder schreib zuerst, was du hören willst.", "err"); return; }
+
+  setStatus("Suche passende Songs …");
+  // Suche Tracks anhand der Beschreibung. (Bewusst nur der stabile /search-Endpunkt,
+  // keine deprecateten Empfehlungs-Endpunkte.)
+  const q = encodeURIComponent(prompt);
+  const search = await api(`/search?type=track&limit=25&q=${q}`);
+  const tracks = (search.tracks?.items || []).filter(Boolean);
+  if (tracks.length === 0) { setStatus("Keine Songs zu dieser Beschreibung gefunden. Versuch es anders.", "err"); return; }
+
+  setStatus("Lege Playlist an …");
+  const me = await api("/me");
+  const name = "🎤 " + (prompt.length > 60 ? prompt.slice(0, 57) + "…" : prompt);
+  const playlist = await api(`/users/${me.id}/playlists`, {
+    method: "POST",
+    body: JSON.stringify({ name, description: "Per Sprachbefehl erstellt.", public: false }),
+  });
+
+  setStatus("Füge Songs hinzu …");
+  const uris = tracks.map((t) => t.uri);
+  await api(`/playlists/${playlist.id}/tracks`, { method: "POST", body: JSON.stringify({ uris }) });
+
+  setStatus(`Fertig! ${uris.length} Songs in „${name}".`, "ok");
+  const r = $("result"); r.classList.remove("hidden");
+  r.innerHTML =
+    `<a href="${playlist.external_urls.spotify}" target="_blank">▶ In Spotify öffnen</a>` +
+    tracks.slice(0, 10).map((t) => `<div class="track">${t.name} — ${t.artists.map((a) => a.name).join(", ")}</div>`).join("");
+}
+
+// ---------- Spracherkennung (im Browser eingebaut) ----------
+function startVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { setStatus("Dein Browser kann keine Spracherkennung. Nutze Chrome/Edge – oder tippe einfach ins Feld.", "err"); return; }
+  const rec = new SR();
+  rec.lang = "de-DE"; rec.interimResults = false; rec.maxAlternatives = 1;
+  const mic = $("mic");
+  mic.classList.add("listening"); setStatus("Ich höre zu … sprich jetzt.");
+  rec.onresult = (e) => { $("prompt").value = e.results[0][0].transcript; setStatus('Verstanden. Drück „Playlist erstellen".', "ok"); };
+  rec.onerror = (e) => setStatus("Spracherkennung-Fehler: " + e.error + ". Du kannst auch tippen.", "err");
+  rec.onend = () => mic.classList.remove("listening");
+  rec.start();
+}
+
+// ---------- UI-Zustand ----------
+function showApp() {
+  $("setup").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  api("/me").then((me) => { $("who").textContent = "Angemeldet als " + (me.display_name || me.id); }).catch(() => {});
+}
+function showSetup() {
+  $("app").classList.add("hidden");
+  $("setup").classList.remove("hidden");
+  const saved = localStorage.getItem("client_id");
+  if (saved) $("clientId").value = saved;
+}
+
+// ---------- Start ----------
+(async function init() {
+  // Events verdrahten
+  $("saveClient").onclick = () => {
+    const id = $("clientId").value.trim();
+    if (!id) { alert("Bitte Client-ID eintragen."); return; }
+    localStorage.setItem("client_id", id);
+    login();
+  };
+  $("mic").onclick = startVoice;
+  $("create").onclick = () => createPlaylist($("prompt").value).catch((e) => setStatus(e.message, "err"));
+  $("logout").onclick = () => { clearToken(); showSetup(); };
+
+  // Kommen wir gerade von Spotify zurück?
+  if (window.location.search.includes("code=")) {
+    setStatus("Melde dich an …");
+    if (await handleRedirect()) { showApp(); return; }
+  }
+  // Bereits ein gültiges Token in dieser Sitzung?
+  if (getToken()) { showApp(); return; }
+  showSetup();
+})();
+</script>
+</body>
+</html>
