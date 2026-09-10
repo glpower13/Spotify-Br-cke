@@ -64,31 +64,45 @@
   .status.ok  { color: var(--accent); }
   .hidden { display: none !important; }
   a { color: var(--accent); }
-  ol { padding-left: 18px; line-height: 1.7; font-size: 14px; color: var(--muted); }
-  code { background:#0f131b; padding:2px 6px; border-radius:6px; color:#cfe; font-size:13px; }
+  code { background:#0f131b; padding:2px 6px; border-radius:6px; color:#cfe; font-size:13px; word-break: break-all; }
   .result { margin-top: 18px; padding: 14px; border:1px solid var(--border); border-radius:12px; background:#0f131b; }
   .track { font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--border); color: var(--text); }
   .track:last-child { border-bottom: none; }
   .divider { height:1px; background:var(--border); margin:22px 0; }
   .pill { display:inline-block; font-size:12px; color:var(--muted); border:1px solid var(--border); border-radius:999px; padding:3px 10px; margin-top:8px;}
+  .note { font-size:13px; color:var(--muted); background:#0f131b; border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-top:14px; line-height:1.6; }
+  .logo { font-size: 40px; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>🎧 Sprach-Playlist</h1>
-  <p class="sub">Sag, worauf du Lust hast — die Playlist landet in deinem Spotify.</p>
 
-  <!-- SCHRITT 1: einmalige Einrichtung der Client-ID -->
-  <div id="setup">
-    <label for="clientId">Deine Spotify Client-ID (nur einmal nötig)</label>
-    <input id="clientId" type="text" placeholder="z. B. 3f9a...  (aus dem Spotify Developer Dashboard)" />
-    <div class="pill">Wo bekomme ich die? → siehe README / Anleitung. Kostenlos, ~3 Min.</div>
-    <div style="height:14px"></div>
-    <button class="btn-primary" id="saveClient">Speichern & mit Spotify anmelden</button>
+  <!-- LOGIN-Bildschirm (für Tester: nur ein Knopf) -->
+  <div id="login" class="hidden">
+    <div class="logo">🎧</div>
+    <h1>Sprach-Playlist</h1>
+    <p class="sub">Sag, worauf du Lust hast — die Playlist landet in deinem Spotify.</p>
+    <button class="btn-primary" id="loginBtn">Mit Spotify anmelden</button>
+    <div class="note">Du meldest dich direkt bei Spotify an. Dein Passwort sieht niemand sonst. Wir erstellen nur Playlists in deinem Konto.</div>
   </div>
 
-  <!-- SCHRITT 2: eingeloggt -> Sprach-UI -->
+  <!-- SETUP (nur wenn KEINE Client-ID hinterlegt ist – Entwickler-/Lokalmodus) -->
+  <div id="setup" class="hidden">
+    <div class="logo">🛠️</div>
+    <h1>Einrichtung</h1>
+    <p class="sub">Es ist noch keine Client-ID hinterlegt. Trag sie einmalig ein (oder besser: in <code>config.js</code>).</p>
+    <label for="clientId">Spotify Client-ID</label>
+    <input id="clientId" type="text" placeholder="aus dem Spotify Developer Dashboard" />
+    <label>Diese Redirect-URI im Spotify-Dashboard eintragen (exakt):</label>
+    <div><code id="redirectShow"></code></div>
+    <div style="height:14px"></div>
+    <button class="btn-primary" id="saveClient">Speichern & anmelden</button>
+  </div>
+
+  <!-- APP (nach Login) -->
   <div id="app" class="hidden">
+    <h1>🎧 Sprach-Playlist</h1>
+    <p class="sub" id="who">Angemeldet.</p>
     <div class="row">
       <button class="mic" id="mic" title="Sprechen">🎤</button>
       <div style="flex:1">
@@ -100,24 +114,23 @@
     <button class="btn-primary" id="create">Playlist erstellen ▶</button>
     <div class="status" id="status"></div>
     <div class="result hidden" id="result"></div>
-
     <div class="divider"></div>
-    <div class="row" style="justify-content:space-between">
-      <span class="sub" id="who" style="margin:0"></span>
+    <div class="row" style="justify-content:flex-end">
       <button class="btn-ghost" id="logout">Abmelden</button>
     </div>
   </div>
 </div>
 
+<script src="config.js"></script>
 <script>
 // =====================================================================
 //  Sprach-Playlist für Spotify  –  Prototyp
-//  Reiner Browser-Code. Kein Server, kein Passwort, kein Backend.
+//  Reiner Browser-Code. Kein eigener Server, kein Passwort bei uns.
 //  Anmeldung per OAuth 2.0 "Authorization Code + PKCE" (sicher, ohne Secret).
 // =====================================================================
 
-// Redirect-URI = genau diese Seite. Muss im Spotify-Dashboard exakt so eingetragen sein.
-const REDIRECT_URI = window.location.origin + "/";
+// Redirect-URI = genau diese Seite (ohne ?query). Funktioniert lokal UND auf GitHub Pages.
+const REDIRECT_URI = (window.location.origin + window.location.pathname).replace(/index\.html$/, "");
 const SCOPES = "playlist-modify-private playlist-modify-public";
 const AUTH_URL = "https://accounts.spotify.com/authorize";
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -125,6 +138,9 @@ const API = "https://api.spotify.com/v1";
 
 const $ = (id) => document.getElementById(id);
 const setStatus = (msg, kind = "") => { const s = $("status"); s.textContent = msg; s.className = "status " + kind; };
+
+// Client-ID: bevorzugt aus config.js (fest hinterlegt), sonst aus lokalem Eintrag.
+function clientId() { return (window.SPOTIFY_CLIENT_ID || "").trim() || localStorage.getItem("client_id") || ""; }
 
 // ---------- PKCE-Hilfsfunktionen ----------
 function randomString(len) {
@@ -138,22 +154,22 @@ async function sha256base64url(str) {
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ---------- Token-Verwaltung ----------
-function getToken() { return sessionStorage.getItem("access_token"); }
-function saveToken(t) { sessionStorage.setItem("access_token", t); }
-function clearToken() { sessionStorage.removeItem("access_token"); }
+// ---------- Token-Verwaltung (nur in dieser Browser-Sitzung) ----------
+const getToken = () => sessionStorage.getItem("access_token");
+const saveToken = (t) => sessionStorage.setItem("access_token", t);
+const clearToken = () => sessionStorage.removeItem("access_token");
 
 // ---------- Login starten ----------
 async function login() {
-  const clientId = localStorage.getItem("client_id");
-  if (!clientId) { alert("Bitte zuerst die Client-ID eintragen."); return; }
+  const id = clientId();
+  if (!id) { showSetup(); return; }
   const verifier = randomString(64);
   const challenge = await sha256base64url(verifier);
   const state = randomString(16);
   sessionStorage.setItem("pkce_verifier", verifier);
   sessionStorage.setItem("oauth_state", state);
   const params = new URLSearchParams({
-    client_id: clientId, response_type: "code", redirect_uri: REDIRECT_URI,
+    client_id: id, response_type: "code", redirect_uri: REDIRECT_URI,
     code_challenge_method: "S256", code_challenge: challenge, state, scope: SCOPES,
   });
   window.location = AUTH_URL + "?" + params.toString();
@@ -162,23 +178,22 @@ async function login() {
 // ---------- Rückkehr von Spotify: Code gegen Token tauschen ----------
 async function handleRedirect() {
   const p = new URLSearchParams(window.location.search);
+  const err = p.get("error");
+  if (err) { setStatus("Anmeldung abgebrochen: " + err, "err"); window.history.replaceState({}, document.title, REDIRECT_URI); return false; }
   const code = p.get("code");
   if (!code) return false;
   if (p.get("state") !== sessionStorage.getItem("oauth_state")) {
     setStatus("Sicherheitsprüfung fehlgeschlagen (state). Bitte neu anmelden.", "err"); return false;
   }
-  const clientId = localStorage.getItem("client_id");
-  const verifier = sessionStorage.getItem("pkce_verifier");
   const body = new URLSearchParams({
     grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI,
-    client_id: clientId, code_verifier: verifier,
+    client_id: clientId(), code_verifier: sessionStorage.getItem("pkce_verifier"),
   });
   const res = await fetch(TOKEN_URL, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
   });
   const data = await res.json();
-  // URL aufräumen (Code aus der Adresszeile entfernen)
-  window.history.replaceState({}, document.title, REDIRECT_URI);
+  window.history.replaceState({}, document.title, REDIRECT_URI); // Code aus der Adresszeile entfernen
   if (data.access_token) { saveToken(data.access_token); return true; }
   setStatus("Anmeldung fehlgeschlagen: " + (data.error_description || data.error || "unbekannt"), "err");
   return false;
@@ -201,10 +216,8 @@ async function createPlaylist(prompt) {
   if (!prompt) { setStatus("Sag oder schreib zuerst, was du hören willst.", "err"); return; }
 
   setStatus("Suche passende Songs …");
-  // Suche Tracks anhand der Beschreibung. (Bewusst nur der stabile /search-Endpunkt,
-  // keine deprecateten Empfehlungs-Endpunkte.)
-  const q = encodeURIComponent(prompt);
-  const search = await api(`/search?type=track&limit=25&q=${q}`);
+  // Bewusst nur der stabile /search-Endpunkt (keine deprecateten Empfehlungs-Endpunkte).
+  const search = await api(`/search?type=track&limit=25&q=${encodeURIComponent(prompt)}`);
   const tracks = (search.tracks?.items || []).filter(Boolean);
   if (tracks.length === 0) { setStatus("Keine Songs zu dieser Beschreibung gefunden. Versuch es anders.", "err"); return; }
 
@@ -241,22 +254,23 @@ function startVoice() {
   rec.start();
 }
 
-// ---------- UI-Zustand ----------
-function showApp() {
-  $("setup").classList.add("hidden");
-  $("app").classList.remove("hidden");
-  api("/me").then((me) => { $("who").textContent = "Angemeldet als " + (me.display_name || me.id); }).catch(() => {});
-}
+// ---------- UI-Umschaltung ----------
+function show(which) { for (const id of ["login", "setup", "app"]) $(id).classList.toggle("hidden", id !== which); }
+function showLogin() { show("login"); }
 function showSetup() {
-  $("app").classList.add("hidden");
-  $("setup").classList.remove("hidden");
+  show("setup");
+  $("redirectShow").textContent = REDIRECT_URI;
   const saved = localStorage.getItem("client_id");
   if (saved) $("clientId").value = saved;
+}
+function showApp() {
+  show("app");
+  api("/me").then((me) => { $("who").textContent = "Angemeldet als " + (me.display_name || me.id); }).catch(() => {});
 }
 
 // ---------- Start ----------
 (async function init() {
-  // Events verdrahten
+  $("loginBtn").onclick = login;
   $("saveClient").onclick = () => {
     const id = $("clientId").value.trim();
     if (!id) { alert("Bitte Client-ID eintragen."); return; }
@@ -265,16 +279,13 @@ function showSetup() {
   };
   $("mic").onclick = startVoice;
   $("create").onclick = () => createPlaylist($("prompt").value).catch((e) => setStatus(e.message, "err"));
-  $("logout").onclick = () => { clearToken(); showSetup(); };
+  $("logout").onclick = () => { clearToken(); clientId() ? showLogin() : showSetup(); };
 
-  // Kommen wir gerade von Spotify zurück?
-  if (window.location.search.includes("code=")) {
-    setStatus("Melde dich an …");
+  if (window.location.search.includes("code=") || window.location.search.includes("error=")) {
     if (await handleRedirect()) { showApp(); return; }
   }
-  // Bereits ein gültiges Token in dieser Sitzung?
   if (getToken()) { showApp(); return; }
-  showSetup();
+  clientId() ? showLogin() : showSetup(); // Client-ID hinterlegt? -> nur Login. Sonst Einrichtung.
 })();
 </script>
 </body>
